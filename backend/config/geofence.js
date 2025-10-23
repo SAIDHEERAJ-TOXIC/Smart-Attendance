@@ -3,6 +3,8 @@
 module.exports = {
   center: { lat: 15.8287, lng: 78.0219 },
   radiusMeters: 250, // conservative campus radius
+  // Default QR validity window (in seconds) for scans
+  qrTtlSeconds: 300,
 };
 
 

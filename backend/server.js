@@ -4,6 +4,8 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const connectDB = require('./config/db');
+const geofence = require('./config/geofence');
+const AdminConfig = require('./models/AdminConfig');
 
 const authRoutes = require('./routes/auth');
 const attendanceRoutes = require('./routes/attendance');
@@ -11,6 +13,7 @@ const qrRoutes = require('./routes/qr');
 const faceRoutes = require('./routes/face');
 const marksRoutes = require('./routes/marks');
 const timetableRoutes = require('./routes/timetable');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 
@@ -20,6 +23,26 @@ app.use(express.json());
 
 // Connect to MongoDB
 connectDB();
+
+// Load admin configuration overrides into in-memory config
+(async () => {
+  try {
+    const cfg = await AdminConfig.findOne({ key: 'global' });
+    if (cfg) {
+      if (cfg.geofence?.center && typeof cfg.geofence.center.lat === 'number' && typeof cfg.geofence.center.lng === 'number') {
+        geofence.center = cfg.geofence.center;
+      }
+      if (typeof cfg.geofence?.radiusMeters === 'number') {
+        geofence.radiusMeters = cfg.geofence.radiusMeters;
+      }
+      if (typeof cfg.qrTtlSeconds === 'number') {
+        geofence.qrTtlSeconds = cfg.qrTtlSeconds;
+      }
+    }
+  } catch (e) {
+    // swallow config load errors at startup
+  }
+})();
 
 // Create HTTP server and bind Socket.IO
 const server = http.createServer(app);
@@ -42,6 +65,7 @@ app.use('/api/qr', qrRoutes);
 app.use('/api/face', faceRoutes);
 app.use('/api/marks', marksRoutes);
 app.use('/api/timetable', timetableRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Test route
 app.get('/', (req, res) => res.send('Smart Attendance API running'));

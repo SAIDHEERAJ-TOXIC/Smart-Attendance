@@ -15,3 +15,17 @@ exports.protect = async (req, res, next) => {
     res.status(401).json({ msg: 'Token invalid' });
   }
 };
+
+// Role-based authorization middleware
+// Usage: authorize('faculty', 'hod')
+exports.authorize = (...allowedRoles) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ msg: 'Not authorized' });
+    }
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ msg: 'Forbidden: insufficient permissions' });
+    }
+    next();
+  };
+};
