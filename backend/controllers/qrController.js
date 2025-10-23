@@ -2,10 +2,13 @@ const QRCode = require('../models/QRCode');
 const Attendance = require('../models/Attendance');
 const AttendanceSession = require('../models/AttendanceSession');
 const User = require('../models/User');
+const AdminConfig = require('../models/AdminConfig');
 const QRCodeLib = require('qrcode');
 const { v4: uuidv4 } = require('uuid');
 const mongoose = require('mongoose');
 const FaceVerificationService = require('../services/faceVerificationService');
+const { isInsideCampus } = require('../utils/geo');
+const geofence = require('../config/geofence');
 
 function startOfDayUTC(date = new Date()) {
   const d = new Date(date);
@@ -36,11 +39,16 @@ exports.generateQR = async (req, res) => {
       location
     }));
 
+    const validForSeconds = geofence.qrTtlSeconds || 300;
+    const validUntil = new Date(qrRecord.createdAt.getTime() + validForSeconds * 1000);
+
     res.json({
       id: qrRecord._id,
       code,
       qrImage,
-      expiresAt: qrRecord.expiresAt
+      type,
+      maxUsage: qrRecord.maxUsage,
+      validUntil
     });
   } catch (e) {
     res.status(500).json({ msg: 'Error generating QR code' });
@@ -73,6 +81,26 @@ exports.scanQR = async (req, res) => {
 
     if (qrRecord.usageCount >= qrRecord.maxUsage) {
       return res.status(403).json({ msg: 'QR code usage limit exceeded' });
+    }
+
+    // Verify QR payload code matches record
+    if (parsedData.code && parsedData.code !== qrRecord.code) {
+      return res.status(400).json({ msg: 'QR code mismatch' });
+    }
+
+    // Enforce geofence
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      return res.status(400).json({ msg: 'Location required' });
+    }
+    if (!isInsideCampus({ lat, lng })) {
+      return res.status(403).json({ msg: 'You are not inside the campus' });
+    }
+
+    // Enforce TTL based on admin-configured value
+    const ttlSeconds = geofence.qrTtlSeconds || 300;
+    const createdAt = qrRecord.createdAt || new Date();
+    if (Date.now() > createdAt.getTime() + ttlSeconds * 1000) {
+      return res.status(403).json({ msg: 'QR code expired' });
     }
 
     // Get student information
@@ -175,7 +203,7 @@ exports.scanQR = async (req, res) => {
         $push: { 
           events: { 
             type: 'enter', 
-            location: qrRecord.location,
+            location: { lat, lng, accuracy },
             method: 'qr_face_verification',
             faceVerified: faceVerification.verified,
             faceScore: faceVerification.score,
@@ -199,7 +227,7 @@ exports.scanQR = async (req, res) => {
         attendanceRecord.checkOutAt = new Date();
         attendanceRecord.events.push({
           type: 'exit',
-          location: qrRecord.location,
+          location: { lat, lng, accuracy },
           method: 'qr_face_verification',
           faceVerified: faceVerification.verified,
           faceScore: faceVerification.score,
@@ -255,6 +283,58 @@ exports.getActiveQRs = async (req, res) => {
     res.json(qrs);
   } catch (e) {
     res.status(500).json({ msg: 'Error fetching QR codes' });
+  }
+};
+
+// Admin: update QR defaults (ttl seconds, maxUsage optional in future)
+exports.adminSetQRDefaults = async (req, res) => {
+  try {
+    const { qrTtlSeconds } = req.body;
+    if (qrTtlSeconds !== undefined && (!Number.isInteger(qrTtlSeconds) || qrTtlSeconds <= 0)) {
+      return res.status(400).json({ msg: 'qrTtlSeconds must be a positive integer' });
+    }
+
+    const updated = await AdminConfig.findOneAndUpdate(
+      { key: 'global' },
+      { $set: { qrTtlSeconds: qrTtlSeconds } },
+      { upsert: true, new: true }
+    );
+
+    // update in-memory config
+    if (qrTtlSeconds !== undefined) geofence.qrTtlSeconds = qrTtlSeconds;
+
+    res.json({ success: true, config: updated });
+  } catch (e) {
+    console.error('Error updating QR defaults:', e);
+    res.status(500).json({ msg: 'Error updating QR defaults' });
+  }
+};
+
+// Admin: update geofence center/radius
+exports.adminSetGeofence = async (req, res) => {
+  try {
+    const { center, radiusMeters } = req.body;
+    if (!center || typeof center.lat !== 'number' || typeof center.lng !== 'number') {
+      return res.status(400).json({ msg: 'center.lat and center.lng are required numbers' });
+    }
+    if (typeof radiusMeters !== 'number' || radiusMeters <= 0) {
+      return res.status(400).json({ msg: 'radiusMeters must be a positive number' });
+    }
+
+    const updated = await AdminConfig.findOneAndUpdate(
+      { key: 'global' },
+      { $set: { geofence: { center, radiusMeters } } },
+      { upsert: true, new: true }
+    );
+
+    // update in-memory config
+    geofence.center = center;
+    geofence.radiusMeters = radiusMeters;
+
+    res.json({ success: true, config: updated });
+  } catch (e) {
+    console.error('Error updating geofence:', e);
+    res.status(500).json({ msg: 'Error updating geofence' });
   }
 };
 

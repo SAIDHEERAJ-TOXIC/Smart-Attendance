@@ -11,19 +11,19 @@ const {
   getAttendanceForDate,
   getFacultyAnalytics
 } = require('../controllers/attendanceController');
-const { protect } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/auth');
 
 // Student routes
-router.post('/check-in', protect, checkIn);
-router.post('/check-out', protect, checkOut);
-router.get('/me', protect, getAttendance);
-router.get('/summary', protect, getSummary);
-router.get('/analytics', protect, getAnalytics);
+router.post('/check-in', protect, authorize('student'), checkIn);
+router.post('/check-out', protect, authorize('student'), checkOut);
+router.get('/me', protect, authorize('student'), getAttendance);
+router.get('/summary', protect, authorize('student'), getSummary);
+router.get('/analytics', protect, authorize('student'), getAnalytics);
 
 // Faculty routes
-router.get('/students', protect, getStudents);
-router.get('/faculty-overview', protect, getFacultyOverview);
-router.get('/faculty-date/:date', protect, getAttendanceForDate);
-router.get('/faculty-analytics', protect, getFacultyAnalytics);
+router.get('/students', protect, authorize('faculty', 'hod', 'dean'), getStudents);
+router.get('/faculty-overview', protect, authorize('faculty', 'hod', 'dean'), getFacultyOverview);
+router.get('/faculty-date/:date', protect, authorize('faculty', 'hod', 'dean'), getAttendanceForDate);
+router.get('/faculty-analytics', protect, authorize('faculty', 'hod', 'dean'), getFacultyAnalytics);
 
 module.exports = router;
